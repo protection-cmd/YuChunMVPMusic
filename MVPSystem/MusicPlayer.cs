@@ -1,4 +1,4 @@
-﻿using AudioApi; // 添加 VoicePlayerBase 的命名空间
+﻿using AudioApi; 
 using Exiled.API.Features;
 using Exiled.Events.EventArgs.Server;
 using LabApi.Loader.Features.Plugins;
@@ -9,35 +9,35 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using VoiceChat;
-using YuChunMVPMusic.MVPSystem; // 添加语音频道枚举
+using YuChunMVPMusic.MVPSystem; 
 using YuChunMVPMusic;
 
 namespace YuRiJianQiuChunYu.MVPSystem
 {
     public class MusicPlayer
     {
-        // 全局音乐播放器实例
         private static VoicePlayerBase _globalPlayer;
 
         public void WaitingForPlayer()
         {
-            if (_globalPlayer != null)
-            {
-                _globalPlayer.Stoptrack(true);
-            }
+            ReleasePlayer(); // 确保清理播放器
+            Server.FriendlyFire = false;
         }
 
         public static string TryPlayMusic(Player p)
         {
+            // 清理旧播放器
+            ReleasePlayer();
+
             if (!YuChunMVPMusic.Plugin.Instance.Config.MVPMusicPath.ContainsKey(p.UserId))
             {
                 Log.Info("玩家没有配置音乐路径");
                 return null;
             }
 
-            if (p == null)
+            if (p == null || !p.IsConnected)
             {
-                Log.Info("玩家为空");
+                Log.Info("玩家为空或已断开连接");
                 return null;
             }
 
@@ -60,40 +60,66 @@ namespace YuRiJianQiuChunYu.MVPSystem
             string selectedMusic = musicList[random.Next(musicList.Count)];
             string musicName = Path.GetFileNameWithoutExtension(selectedMusic);
 
-            // 获取或创建全局播放器
-            if (_globalPlayer == null)
+            try
             {
-                // 使用服务器控制台作为音频源
-                Player host = Player.Get(Server.Host);
-                if (host == null)
+                // 为当前MVP玩家创建新播放器
+                _globalPlayer = VoicePlayerBase.Get(p.ReferenceHub);
+                if (_globalPlayer == null)
                 {
-                    Log.Error("无法获取服务器控制台玩家");
+                    Log.Error($"无法为玩家 {p.Nickname} 创建播放器");
                     return null;
                 }
 
-                _globalPlayer = VoicePlayerBase.Get(host.ReferenceHub);
-                _globalPlayer.BroadcastChannel = VoiceChatChannel.Intercom; // 使用全局频道
+                _globalPlayer.BroadcastChannel = VoiceChatChannel.Intercom;
+                _globalPlayer.Volume = 100f;
+                _globalPlayer.Loop = false;
+                _globalPlayer.Shuffle = false;
+
+                // 设置广播目标
+                _globalPlayer.BroadcastTo.Clear();
+                foreach (Player player in Player.List)
+                {
+                    if (player.IsConnected)
+                    {
+                        _globalPlayer.BroadcastTo.Add(player.Id);
+                    }
+                }
+
+                // 播放音乐
+                _globalPlayer.Enqueue(selectedMusic, -1);
+                _globalPlayer.Play(0);
+
+                // 返回带玩家名的音乐信息
+                string displayInfo = $"{p.Nickname} 的专属音乐: {musicName}";
+                Log.Info($"播放 {displayInfo}");
+                return displayInfo;
             }
-
-            // 配置播放器
-            _globalPlayer.Stoptrack(true); // 停止并清空当前播放
-            _globalPlayer.Volume = 100f;   // 100% 音量
-            _globalPlayer.Loop = false;     // 不循环
-            _globalPlayer.Shuffle = false;  // 不随机
-
-            // 设置广播目标为所有玩家
-            _globalPlayer.BroadcastTo.Clear();
-            foreach (Player player in Player.List)
+            catch (Exception ex)
             {
-                _globalPlayer.BroadcastTo.Add(player.Id);
+                Log.Error($"播放音乐时出错: {ex}");
+                ReleasePlayer();
+                return null;
             }
+        }
 
-            // 添加并播放音乐
-            _globalPlayer.Enqueue(selectedMusic, -1);
-            _globalPlayer.Play(0);
-
-            Log.Info($"MVP音乐已播放: {musicName}");
-            return musicName;
+        // 释放播放器资源
+        public static void ReleasePlayer()
+        {
+            if (_globalPlayer != null)
+            {
+                try
+                {
+                    _globalPlayer.Stoptrack(true);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"停止播放器时出错: {ex}");
+                }
+                finally
+                {
+                    _globalPlayer = null;
+                }
+            }
         }
 
         public void RoundEnded(RoundEndedEventArgs ev)
@@ -120,13 +146,13 @@ namespace YuRiJianQiuChunYu.MVPSystem
 
                     Timing.CallDelayed(0.5f, () =>
                     {
-                        string musicName = TryPlayMusic(mvpPlayer);
+                        string musicInfo = TryPlayMusic(mvpPlayer);
                         Map.ClearBroadcasts();
 
-                        if (!string.IsNullOrEmpty(musicName))
+                        if (!string.IsNullOrEmpty(musicInfo))
                         {
-                            sb.AppendLine($"正在播放MVP专属音乐: <color=#00FFFF>{musicName}</color>");
-                            Log.Info($"MVP音乐播放成功: {musicName}");
+                            sb.AppendLine($"正在播放: <color=#00FFFF>{musicInfo}</color>");
+                            Log.Info($"MVP音乐播放成功: {musicInfo}");
                         }
                         else
                         {
@@ -140,10 +166,14 @@ namespace YuRiJianQiuChunYu.MVPSystem
                         }
 
                         Map.Broadcast(30, sb.ToString(), 0, false);
+
+                        // 延长到20秒后释放播放器
+                        Timing.CallDelayed(20f, () => ReleasePlayer());
                     });
                 }
                 else
                 {
+
                     Log.Info("本局没有符合条件的MVP或MVP数据无效");
                     sb.AppendLine("本局<color=#FC0000>MVP</color>：虚位以待");
 
