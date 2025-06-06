@@ -8,7 +8,7 @@
 
 # 如何安装？
 
-从 下载最新版本的插件 文件，并将其放置到服务器的 文件夹中.dllExiled/Plugins
+从 下载最新版本的dll插件文件，并将其放置到服务器的Exiled/Plugins文件夹中
 
 安装AudioApi.dll依赖把这个放在依赖项里面Exiled/Plugins/dependencies
 
